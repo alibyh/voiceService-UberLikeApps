@@ -7,10 +7,14 @@ Uses tool-call mode for guaranteed JSON output.
 from __future__ import annotations
 
 import json
+import logging
 import math
 from dataclasses import dataclass
 
 from .config import settings
+
+
+logger = logging.getLogger("matcher.rerank")
 
 
 @dataclass
@@ -133,21 +137,37 @@ class HaikuReranker:
             return []
         client = self._get_client()
         prompt = build_prompt(query, candidates, user_lat, user_lon)
-        resp = client.messages.create(
-            model=self.model,
-            max_tokens=512,
-            temperature=0,
-            tools=[_RERANK_TOOL],
-            tool_choice={"type": "tool", "name": "rank_candidates"},
-            messages=[{"role": "user", "content": prompt}],
-        )
+        try:
+            resp = client.messages.create(
+                model=self.model,
+                max_tokens=512,
+                temperature=0,
+                tools=[_RERANK_TOOL],
+                tool_choice={"type": "tool", "name": "rank_candidates"},
+                messages=[{"role": "user", "content": prompt}],
+            )
+        except Exception as exc:
+            logger.error("Haiku rerank API call failed: %s", exc, exc_info=True)
+            raise
+
+        # Walk the response and pull the tool_use payload.
         for block in resp.content:
-            if getattr(block, "type", None) == "tool_use" and block.name == "rank_candidates":
+            btype = getattr(block, "type", None)
+            if btype == "tool_use" and getattr(block, "name", None) == "rank_candidates":
                 payload = block.input
-                ranked_raw = payload.get("ranked", []) if isinstance(payload, dict) else []
-                # Allow stringified JSON as a fallback.
-                if not ranked_raw and isinstance(payload, str):
-                    ranked_raw = json.loads(payload).get("ranked", [])
+                if isinstance(payload, str):
+                    try:
+                        payload = json.loads(payload)
+                    except json.JSONDecodeError:
+                        logger.error("rerank tool_use payload was non-JSON string: %r", payload)
+                        return []
+                if not isinstance(payload, dict):
+                    logger.error("rerank tool_use payload not a dict: %r", payload)
+                    return []
+                ranked_raw = payload.get("ranked", [])
+                if not ranked_raw:
+                    logger.warning("rerank returned empty ranked list. payload=%r", payload)
+                    return []
                 return [
                     RerankResult(
                         place_id=int(item["id"]),
@@ -156,6 +176,25 @@ class HaikuReranker:
                     )
                     for item in ranked_raw
                 ]
+
+        # No matching tool_use block found — log what Claude actually returned
+        # so we can diagnose without another round trip.
+        try:
+            debug_blocks = [
+                {
+                    "type": getattr(b, "type", None),
+                    "name": getattr(b, "name", None),
+                    "text": (getattr(b, "text", None) or "")[:300],
+                }
+                for b in resp.content
+            ]
+        except Exception:
+            debug_blocks = []
+        logger.error(
+            "Haiku rerank: no rank_candidates tool_use block. stop_reason=%s blocks=%s",
+            getattr(resp, "stop_reason", None),
+            debug_blocks,
+        )
         return []
 
 

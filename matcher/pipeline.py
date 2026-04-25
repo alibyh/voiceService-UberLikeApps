@@ -200,6 +200,16 @@ class Pipeline:
             )
 
         ranked = self.reranker.rerank(query, rerank_inputs, user_lat=user_lat, user_lon=user_lon)
+        # Safety net: if the LLM reranker returned nothing despite having
+        # candidates, fall back to the heuristic so the user always gets a
+        # result. The Haiku reranker logs the cause separately.
+        if not ranked and rerank_inputs:
+            from .rerank import HeuristicReranker
+
+            print("[pipeline] LLM reranker returned 0 results; falling back to heuristic")
+            ranked = HeuristicReranker().rerank(
+                query, rerank_inputs, user_lat=user_lat, user_lon=user_lon
+            )
         # Map back to Match objects.
         rerank_by_id = {r.place_id: r for r in ranked}
         ordered_matches: list[Match] = []
