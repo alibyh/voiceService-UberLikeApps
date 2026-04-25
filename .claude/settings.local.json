@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c \"import json; d = json.load\\(open\\('places.json'\\)\\); print\\(f'Total places: {len\\(d\\)}'\\); print\\(f'Total variants: {sum\\(len\\(p[\\\\\"variants\\\\\"]\\) for p in d\\)}'\\); print\\('Sample IDs:', [p['id'] for p in d[:5]]\\); ids = [p['id'] for p in d]; print\\('1844 in data:', 1844 in ids\\)\")",
+      "Bash(mkdir -p matcher/data matcher/retrievers tests matcher/data/index)",
+      "Bash(mv places.json matcher/data/places.json)",
+      "Bash(python3 -m venv .venv)",
+      "Bash(.venv/bin/pip install *)",
+      "Bash(.venv/bin/python -c ' *)",
+      "Bash(.venv/bin/python -m matcher.index_build)",
+      "Bash(.venv/bin/python -m matcher.index_build --skip-semantic)",
+      "Bash(.venv/bin/python -m matcher.cli \"بتروديس الشارة\" --no-semantic --no-rerank --top-k 3)",
+      "Bash(.venv/bin/python -m matcher.cli \"بتروديس الشارة\" --no-semantic --no-rerank --top-k 3 --lat 18.10 --lon -15.96)",
+      "Bash(.venv/bin/python -m pytest tests/ -q)",
+      "Bash(.venv/bin/python -m matcher.eval)"
+    ]
+  }
+}

@@ -1,0 +1,39 @@
+[
+  {"query": "بتروديس الشارة", "expected_id": 1844, "note": "missing yaa"},
+  {"query": "بيتروديس الشارة", "expected_id": 1844, "note": "with yaa"},
+  {"query": "بيترو ديس الشارة", "expected_id": 1844, "note": "split with space"},
+  {"query": "Petrodis Chara", "expected_id": 1844, "note": "French ch→sh"},
+  {"query": "Petrodis Al Shara", "expected_id": 1844, "note": "Latin English"},
+  {"query": "petro dis route shara", "expected_id": 1844, "note": "split + English route"},
+  {"query": "ستاسيون بترودس", "expected_id": 1844, "note": "ASR drops final word + sad→sin"},
+  {"query": "محطة بتروديس الشاره", "expected_id": 1844, "note": "with station prefix"},
+  {"query": "Station Petrodis Chara", "expected_id": 1844, "note": "Latin + station"},
+
+  {"query": "ولد سبرو", "expected_id": 13, "note": "core only"},
+  {"query": "بولانجري ولد سبرو", "expected_id": 13, "note": "with bakery prefix"},
+  {"query": "boulangerie oul sibrou", "expected_id": 13, "note": "French spelling"},
+  {"query": "بولانشري والسبرو", "expected_id": 13, "note": "ASR-style spelling"},
+  {"query": "four old sibrou", "expected_id": 13, "note": "Latin + ASR errors"},
+
+  {"query": "كابيتال", "expected_id": 10, "note": "single token"},
+  {"query": "مرشي كابيتال", "expected_id": 10, "note": "Arabic marche"},
+  {"query": "marche capitale", "expected_id": 10, "note": "French"},
+  {"query": "marché capitale", "expected_id": 10, "note": "French with accent"},
+  {"query": "souk capitale", "expected_id": 10, "note": "souk synonym"},
+  {"query": "سوق كبيتال", "expected_id": 10, "note": "souk Arabic, missing alef"},
+
+  {"query": "عين الطلح", "expected_id": 11, "note": "core"},
+  {"query": "كرفور عين الطلح", "expected_id": 11, "note": "carrefour prefix"},
+  {"query": "carrefour ain talh", "expected_id": 11, "note": "Latin"},
+  {"query": "ain talh", "expected_id": 11, "note": "Latin core"},
+
+  {"query": "الميناء", "expected_id": 9, "note": "Arabic core"},
+  {"query": "le port", "expected_id": 9, "note": "French"},
+  {"query": "el mina", "expected_id": 9, "note": "Latin Arabic-style"},
+  {"query": "بور", "expected_id": 9, "note": "transliterated port"},
+
+  {"query": "عنكار دار البركة", "expected_id": 8, "note": "with space"},
+  {"query": "انكار دار البركه", "expected_id": 8, "note": "ASR a→3a swap"},
+  {"query": "سمعة منت اجدي", "expected_id": 12, "note": "alef variants"},
+  {"query": "mint jdey", "expected_id": 12, "note": "Latin transliteration"}
+]

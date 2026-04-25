@@ -1,0 +1,20 @@
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
+venv/
+.env
+*.egg-info/
+build/
+dist/
+
+# Generated indexes (rebuild with `python -m matcher.index_build`)
+matcher/data/index/*.pkl
+matcher/data/index/*.idx
+matcher/data/index/*.npy
+matcher/data/index/metadata.json
+
+# Logs
+logs/
+*.jsonl
