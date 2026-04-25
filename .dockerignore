@@ -1,0 +1,15 @@
+.venv
+venv
+.env
+.env.local
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.git
+.gitignore
+.DS_Store
+logs
+matcher/data/index
+.idea
+.vscode
