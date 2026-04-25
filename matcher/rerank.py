@@ -51,7 +51,7 @@ _RERANK_TOOL = {
                             "maximum": 1,
                             "description": "0=clearly wrong, 1=certain match",
                         },
-                        "reason": {"type": "string", "maxLength": 200},
+                        "reason": {"type": "string", "maxLength": 60},
                     },
                     "required": ["id", "confidence", "reason"],
                 },
@@ -140,7 +140,7 @@ class HaikuReranker:
         try:
             resp = client.messages.create(
                 model=self.model,
-                max_tokens=512,
+                max_tokens=2048,
                 temperature=0,
                 tools=[_RERANK_TOOL],
                 tool_choice={"type": "tool", "name": "rank_candidates"},
@@ -166,7 +166,11 @@ class HaikuReranker:
                     return []
                 ranked_raw = payload.get("ranked", [])
                 if not ranked_raw:
-                    logger.warning("rerank returned empty ranked list. payload=%r", payload)
+                    logger.warning(
+                        "rerank returned empty ranked list. stop_reason=%s payload=%r",
+                        getattr(resp, "stop_reason", None),
+                        payload,
+                    )
                     return []
                 return [
                     RerankResult(
