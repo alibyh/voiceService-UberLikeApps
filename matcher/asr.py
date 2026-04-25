@@ -16,7 +16,12 @@ from .config import settings
 
 
 class ASRBackend(Protocol):
-    def transcribe(self, audio: BinaryIO, prompt: str | None = None) -> list[str]:
+    def transcribe(
+        self,
+        audio: BinaryIO,
+        prompt: str | None = None,
+        filename: str | None = None,
+    ) -> list[str]:
         """Return up to N best transcripts, most likely first."""
         ...
 
@@ -60,15 +65,26 @@ class WhisperBackend:
             self._client = OpenAI(api_key=settings.openai_api_key)
         return self._client
 
-    def transcribe(self, audio: BinaryIO, prompt: str | None = None) -> list[str]:
+    def transcribe(
+        self,
+        audio: BinaryIO,
+        prompt: str | None = None,
+        filename: str | None = None,
+    ) -> list[str]:
         client = self._get_client()
+        # OpenAI's SDK uses the filename's extension to detect the format.
+        # Fall back to .m4a since that's what Expo's recorder produces by default.
+        name = filename or "audio.m4a"
+        audio_bytes = audio.read()
+        audio.seek(0)
+
         # OpenAI Whisper returns one transcript per call. Until first-class
-        # N-best lands in the API we approximate by sampling at low temps.
+        # N-best lands in the API we approximate by sampling at one or two temps.
         candidates: list[str] = []
-        for temp in (0.0, 0.2, 0.4):
+        for temp in (0.0, 0.4):
             resp = client.audio.transcriptions.create(
                 model=self.model,
-                file=audio,
+                file=(name, audio_bytes),
                 language="ar",
                 prompt=prompt or "",
                 temperature=temp,
@@ -76,7 +92,6 @@ class WhisperBackend:
             text = getattr(resp, "text", None) or str(resp)
             if text and text not in candidates:
                 candidates.append(text)
-            audio.seek(0)
         # Order by frequency (a transcript that came back twice is more likely).
         counts = Counter(candidates)
         return [t for t, _ in counts.most_common()]
@@ -88,7 +103,12 @@ class StaticBackend:
     def __init__(self, transcripts: list[str]) -> None:
         self._transcripts = transcripts
 
-    def transcribe(self, audio: BinaryIO, prompt: str | None = None) -> list[str]:
+    def transcribe(
+        self,
+        audio: BinaryIO,
+        prompt: str | None = None,
+        filename: str | None = None,
+    ) -> list[str]:
         return list(self._transcripts)
 
 

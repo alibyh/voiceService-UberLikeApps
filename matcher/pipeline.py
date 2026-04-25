@@ -102,12 +102,14 @@ class Pipeline:
     # --------------------------------------------------------------------
     # Stage 1 — ASR
 
-    def transcribe(self, audio: BinaryIO) -> list[str]:
+    def transcribe(self, audio: BinaryIO, filename: str | None = None) -> list[str]:
         if self.asr_backend is None:
             from .asr import default_backend
 
             self.asr_backend = default_backend()
-        return self.asr_backend.transcribe(audio, prompt=self.bias_prompt)
+        return self.asr_backend.transcribe(
+            audio, prompt=self.bias_prompt, filename=filename
+        )
 
     # --------------------------------------------------------------------
     # Stage 3 — fan-out retrieval (parallel)
