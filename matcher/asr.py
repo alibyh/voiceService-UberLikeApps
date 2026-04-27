@@ -239,22 +239,21 @@ class DeepgramBackend:
         prompt: str | None = None,
         filename: str | None = None,
     ) -> list[str]:
-        from deepgram import PrerecordedOptions
-
         client = self._get_client()
         audio_bytes = audio.read()
         audio.seek(0)
 
-        # nova-2 supports Arabic. Multi-language code-switching (ar/fr/en) is
-        # handled by `detect_language=True`; otherwise we hint Arabic.
-        options = PrerecordedOptions(
-            model=self.model,
-            language="ar",
-            keywords=self._get_keywords(),
-            smart_format=True,
-            punctuate=True,
-            alternatives=3,  # native N-best — no temperature loop needed
-        )
+        # Use a plain dict for options instead of the typed PrerecordedOptions
+        # class — the class lives at different import paths across SDK versions
+        # (deepgram-sdk v3 vs v4). The dict form is stable.
+        options = {
+            "model": self.model,
+            "language": "ar",
+            "keywords": self._get_keywords(),
+            "smart_format": True,
+            "punctuate": True,
+            "alternatives": 3,  # native N-best — no temperature loop needed
+        }
 
         payload = {"buffer": audio_bytes}
         response = client.listen.rest.v("1").transcribe_file(payload, options)
