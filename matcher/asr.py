@@ -169,17 +169,27 @@ class WhisperBackend:
         return [t for t, _ in counts.most_common()]
 
 
-def build_keyword_list(places_path: Path, max_keywords: int = 200) -> list[str]:
+def build_keyword_list(
+    places_path: Path,
+    max_keywords: int = 50,
+    max_keyword_len: int = 25,
+) -> list[str]:
     """Build a `keywords` list for Deepgram from the catalog.
 
     Deepgram's keyword boosting is first-class — each keyword can be passed
     with a `:boost` suffix (1–10). We use 3 by default, which is enough to
     nudge the decoder toward our vocabulary without over-fitting.
 
-    Cap the list at Deepgram's documented max of 200. If the catalog is
-    bigger, sample evenly across the full id range so late-added places
-    aren't systematically excluded — taking only the first N would silently
-    drop everything past id ~200.
+    Two practical caps matter:
+    - Total count: keywords go on the URL query string. A few hundred long
+      Arabic names URL-encodes to >12KB and trips the gateway's request-line
+      limit. Stay around 50.
+    - Per-keyword length: skip very long compound canonicals like
+      "مجمع مدارس X الحرة - Ecole X Privé" — they're not how anyone would
+      ever say a place anyway, so they wouldn't help boosting either.
+
+    Sample evenly across the full id range so late-added places aren't
+    silently excluded.
     """
     with open(places_path, "r", encoding="utf-8") as f:
         places = json.load(f)
@@ -188,15 +198,18 @@ def build_keyword_list(places_path: Path, max_keywords: int = 200) -> list[str]:
     seen: set[str] = set()
     for p in places:
         name = (p.get("canonicalName") or "").strip()
-        if name and name not in seen:
+        if not name or name in seen:
+            continue
+        # Trim the trailing "- Latin form" half if a name has both scripts
+        # joined by a dash; the Arabic side is usually the more useful keyword.
+        primary = name.split(" - ", 1)[0].strip()
+        if primary and len(primary) <= max_keyword_len:
             seen.add(name)
-            canonicals.append(name)
+            canonicals.append(primary)
 
     if len(canonicals) <= max_keywords:
         sampled = canonicals
     else:
-        # Even stride sampling — preserves the first and last entries and
-        # spreads coverage across the catalog.
         stride = len(canonicals) / max_keywords
         sampled = [canonicals[int(i * stride)] for i in range(max_keywords)]
 
