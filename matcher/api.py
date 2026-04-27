@@ -137,7 +137,13 @@ async def resolve_audio(
 
     logger.info("resolve_audio: transcripts=%s", transcripts)
     if not transcripts:
-        raise HTTPException(status_code=422, detail="no transcripts produced")
+        # All-empty after the hallucination filter usually means the audio was
+        # silent or unintelligible. Tell the client so they can prompt the user
+        # to retry rather than showing zero matches with no explanation.
+        raise HTTPException(
+            status_code=422,
+            detail="no speech detected — the recording may be silent or too quiet",
+        )
     primary, *extras = transcripts
     resp = await pipeline.resolve(
         primary,

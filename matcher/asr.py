@@ -8,11 +8,50 @@ bytes + an optional bias-prompt and returns a list of N-best transcripts.
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter
 from pathlib import Path
 from typing import BinaryIO, Protocol
 
 from .config import settings
+
+
+# Whisper emits these phrases when given silent/unclear audio — they are
+# hallucinations from YouTube training data, not transcriptions. Drop them.
+_WHISPER_HALLUCINATIONS = {
+    "اشتركوا في القناة",
+    "شكرا على المشاهدة",
+    "شكرا لكم على المشاهدة",
+    "شكرا لمشاهدتكم",
+    "ترجمة نانسي قنقر",
+    "subscribe to the channel",
+    "thanks for watching",
+    "thank you for watching",
+    "please subscribe",
+    "merci d'avoir regardé",
+    "abonnez-vous",
+}
+
+
+def _is_hallucination(text: str) -> bool:
+    folded = text.strip().lower()
+    return any(h in folded for h in _WHISPER_HALLUCINATIONS)
+
+
+def _collapse_repetition(text: str) -> str:
+    """Whisper loops sometimes emit 'X, X, X, X, ...' for noisy audio.
+
+    If a comma-delimited transcript repeats the same fragment 3+ times in a
+    row, keep only the first occurrence — that's the most likely real signal.
+    """
+    parts = [p.strip() for p in re.split(r"[,،]", text) if p.strip()]
+    if len(parts) < 3:
+        return text
+    counts = Counter(parts)
+    most_common, n = counts.most_common(1)[0]
+    if n >= 3 and n / len(parts) >= 0.5:
+        return most_common
+    return text
 
 
 class ASRBackend(Protocol):
@@ -90,7 +129,12 @@ class WhisperBackend:
                 temperature=temp,
             )
             text = getattr(resp, "text", None) or str(resp)
-            if text and text not in candidates:
+            if not text:
+                continue
+            text = _collapse_repetition(text)
+            if _is_hallucination(text):
+                continue
+            if text not in candidates:
                 candidates.append(text)
         # Order by frequency (a transcript that came back twice is more likely).
         counts = Counter(candidates)
