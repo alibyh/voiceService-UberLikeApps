@@ -23,10 +23,13 @@ def _path(env_key: str, default: str) -> Path:
 class Settings:
     anthropic_api_key: str | None
     openai_api_key: str | None
+    deepgram_api_key: str | None
 
     reranker_model: str
     embedding_model: str
     asr_model: str
+    asr_backend: str  # "whisper" | "deepgram"
+    deepgram_model: str
 
     places_path: Path
     index_dir: Path
@@ -39,9 +42,12 @@ class Settings:
 settings = Settings(
     anthropic_api_key=os.getenv("ANTHROPIC_API_KEY") or None,
     openai_api_key=os.getenv("OPENAI_API_KEY") or None,
+    deepgram_api_key=os.getenv("DEEPGRAM_API_KEY") or None,
     reranker_model=os.getenv("RERANKER_MODEL", "claude-haiku-4-5"),
     embedding_model=os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3"),
     asr_model=os.getenv("ASR_MODEL", "whisper-1"),
+    asr_backend=os.getenv("ASR_BACKEND", "whisper").lower(),
+    deepgram_model=os.getenv("DEEPGRAM_MODEL", "nova-2-general"),
     places_path=_path("PLACES_PATH", "matcher/data/places.json"),
     index_dir=_path("INDEX_DIR", "matcher/data/index"),
     log_file=_path("LOG_FILE", "logs/resolutions.jsonl"),

@@ -65,12 +65,15 @@ class ASRBackend(Protocol):
         ...
 
 
-def build_bias_prompt(places_path: Path, top_k: int = 50) -> str:
-    """Build a comma-separated string of the most common canonical names.
+def build_bias_prompt(places_path: Path, top_k: int = 80) -> str:
+    """Build a context+vocabulary prompt to bias Whisper.
 
-    "Most common" here is by length-truncation of the catalog — we just take
-    the first `top_k` canonicals. A frequency signal would require usage logs
-    we don't have yet.
+    Whisper's `prompt=` is capped at ~244 tokens. We use that budget to:
+    1. Set dialect context ("Hassaniya Arabic in Mauritania, places in Nouakchott").
+    2. List the most common canonical names so the decoder has them in scope.
+
+    This is soft conditioning — it nudges Whisper toward our vocabulary but
+    doesn't force it. For hard keyword boosting, switch to Deepgram or Soniox.
     """
     with open(places_path, "r", encoding="utf-8") as f:
         places = json.load(f)
@@ -83,7 +86,11 @@ def build_bias_prompt(places_path: Path, top_k: int = 50) -> str:
             seen.add(name)
         if len(names) >= top_k:
             break
-    return ", ".join(names)
+    preamble = (
+        "أسماء أماكن في نواكشوط، موريتانيا. قد يخلط المتحدث الحسانية والعربية والفرنسية. "
+        "Place names in Nouakchott, Mauritania. The speaker may mix Hassaniya Arabic, French, and English."
+    )
+    return preamble + " " + ", ".join(names)
 
 
 class WhisperBackend:
@@ -119,6 +126,8 @@ class WhisperBackend:
 
         # OpenAI Whisper returns one transcript per call. Until first-class
         # N-best lands in the API we approximate by sampling at one or two temps.
+        # We use response_format="verbose_json" to access per-segment metadata
+        # (no_speech_prob, avg_logprob) so we can drop low-confidence guesses.
         candidates: list[str] = []
         for temp in (0.0, 0.4):
             resp = client.audio.transcriptions.create(
@@ -127,10 +136,29 @@ class WhisperBackend:
                 language="ar",
                 prompt=prompt or "",
                 temperature=temp,
+                response_format="verbose_json",
             )
-            text = getattr(resp, "text", None) or str(resp)
+            text = getattr(resp, "text", None)
             if not text:
                 continue
+            # Reject transcripts where the decoder itself is unsure. Thresholds
+            # are tuned to drop hallucinations while keeping noisy-but-real speech.
+            segments = getattr(resp, "segments", None) or []
+
+            def _seg_field(seg, key, default):
+                if isinstance(seg, dict):
+                    return seg.get(key, default)
+                return getattr(seg, key, default)
+
+            if segments:
+                no_speech = max(
+                    (_seg_field(s, "no_speech_prob", 0.0) for s in segments), default=0.0
+                )
+                avg_logprob = min(
+                    (_seg_field(s, "avg_logprob", 0.0) for s in segments), default=0.0
+                )
+                if no_speech > 0.6 or avg_logprob < -1.0:
+                    continue
             text = _collapse_repetition(text)
             if _is_hallucination(text):
                 continue
@@ -139,6 +167,119 @@ class WhisperBackend:
         # Order by frequency (a transcript that came back twice is more likely).
         counts = Counter(candidates)
         return [t for t, _ in counts.most_common()]
+
+
+def build_keyword_list(places_path: Path, max_keywords: int = 200) -> list[str]:
+    """Build a `keywords` list for Deepgram from the catalog.
+
+    Deepgram's keyword boosting is first-class — each keyword can be passed
+    with a `:boost` suffix (1–10). We use 3 by default, which is enough to
+    nudge the decoder toward our vocabulary without over-fitting.
+
+    Cap the list at Deepgram's documented max of 200. If the catalog is
+    bigger, sample evenly across the full id range so late-added places
+    aren't systematically excluded — taking only the first N would silently
+    drop everything past id ~200.
+    """
+    with open(places_path, "r", encoding="utf-8") as f:
+        places = json.load(f)
+
+    canonicals: list[str] = []
+    seen: set[str] = set()
+    for p in places:
+        name = (p.get("canonicalName") or "").strip()
+        if name and name not in seen:
+            seen.add(name)
+            canonicals.append(name)
+
+    if len(canonicals) <= max_keywords:
+        sampled = canonicals
+    else:
+        # Even stride sampling — preserves the first and last entries and
+        # spreads coverage across the catalog.
+        stride = len(canonicals) / max_keywords
+        sampled = [canonicals[int(i * stride)] for i in range(max_keywords)]
+
+    return [f"{name}:3" for name in sampled]
+
+
+class DeepgramBackend:
+    """Deepgram Nova with first-class keyword boosting.
+
+    This is the structurally correct ASR for our problem: keyword boosting
+    is hard conditioning (decoder-level), not soft prompting like Whisper.
+    Pass each place name as a boosted keyword and the model is much more
+    likely to hear "بتروديس" instead of falling back to a more common phrase.
+    """
+
+    def __init__(self, model: str | None = None) -> None:
+        self.model = model or settings.deepgram_model
+        self._client = None
+        self._keywords: list[str] | None = None
+
+    def _get_client(self):
+        if self._client is None:
+            from deepgram import DeepgramClient
+
+            if not settings.deepgram_api_key:
+                raise RuntimeError(
+                    "DEEPGRAM_API_KEY is not set. Add it to your env to use the Deepgram backend."
+                )
+            self._client = DeepgramClient(settings.deepgram_api_key)
+        return self._client
+
+    def _get_keywords(self) -> list[str]:
+        if self._keywords is None:
+            self._keywords = build_keyword_list(settings.places_path)
+        return self._keywords
+
+    def transcribe(
+        self,
+        audio: BinaryIO,
+        prompt: str | None = None,
+        filename: str | None = None,
+    ) -> list[str]:
+        from deepgram import PrerecordedOptions
+
+        client = self._get_client()
+        audio_bytes = audio.read()
+        audio.seek(0)
+
+        # nova-2 supports Arabic. Multi-language code-switching (ar/fr/en) is
+        # handled by `detect_language=True`; otherwise we hint Arabic.
+        options = PrerecordedOptions(
+            model=self.model,
+            language="ar",
+            keywords=self._get_keywords(),
+            smart_format=True,
+            punctuate=True,
+            alternatives=3,  # native N-best — no temperature loop needed
+        )
+
+        payload = {"buffer": audio_bytes}
+        response = client.listen.rest.v("1").transcribe_file(payload, options)
+
+        # Walk results.channels[0].alternatives → list of {transcript, confidence, ...}
+        try:
+            channels = response.results.channels
+            alts = channels[0].alternatives if channels else []
+        except (AttributeError, IndexError):
+            return []
+
+        candidates: list[str] = []
+        for alt in alts:
+            text = (getattr(alt, "transcript", "") or "").strip()
+            if not text:
+                continue
+            confidence = float(getattr(alt, "confidence", 1.0) or 0.0)
+            if confidence < 0.3:
+                continue
+            text = _collapse_repetition(text)
+            if _is_hallucination(text):
+                continue
+            if text not in candidates:
+                candidates.append(text)
+        return candidates
 
 
 class StaticBackend:
@@ -157,4 +298,14 @@ class StaticBackend:
 
 
 def default_backend() -> ASRBackend:
+    """Pick the ASR backend based on ASR_BACKEND env var.
+
+    Falls back to Whisper if "deepgram" is requested but no key is set.
+    """
+    choice = settings.asr_backend
+    if choice == "deepgram":
+        if not settings.deepgram_api_key:
+            print("[asr] ASR_BACKEND=deepgram but DEEPGRAM_API_KEY unset; falling back to Whisper")
+            return WhisperBackend()
+        return DeepgramBackend()
     return WhisperBackend()
