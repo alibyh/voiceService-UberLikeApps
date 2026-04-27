@@ -212,22 +212,11 @@ class DeepgramBackend:
     likely to hear "بتروديس" instead of falling back to a more common phrase.
     """
 
+    _ENDPOINT = "https://api.deepgram.com/v1/listen"
+
     def __init__(self, model: str | None = None) -> None:
         self.model = model or settings.deepgram_model
-        self._client = None
         self._keywords: list[str] | None = None
-
-    def _get_client(self):
-        if self._client is None:
-            from deepgram import DeepgramClient
-
-            if not settings.deepgram_api_key:
-                raise RuntimeError(
-                    "DEEPGRAM_API_KEY is not set. Add it to your env to use the Deepgram backend."
-                )
-            # Newer deepgram-sdk versions require api_key as a keyword arg.
-            self._client = DeepgramClient(api_key=settings.deepgram_api_key)
-        return self._client
 
     def _get_keywords(self) -> list[str]:
         if self._keywords is None:
@@ -240,38 +229,64 @@ class DeepgramBackend:
         prompt: str | None = None,
         filename: str | None = None,
     ) -> list[str]:
-        client = self._get_client()
+        import httpx
+
+        if not settings.deepgram_api_key:
+            raise RuntimeError(
+                "DEEPGRAM_API_KEY is not set. Add it to your env to use the Deepgram backend."
+            )
+
         audio_bytes = audio.read()
         audio.seek(0)
 
-        # Use a plain dict for options instead of the typed PrerecordedOptions
-        # class — the class lives at different import paths across SDK versions
-        # (deepgram-sdk v3 vs v4). The dict form is stable.
-        options = {
-            "model": self.model,
-            "language": "ar",
-            "keywords": self._get_keywords(),
-            "smart_format": True,
-            "punctuate": True,
-            "alternatives": 3,  # native N-best — no temperature loop needed
+        # We call the REST API directly. The official SDK's class layout shifts
+        # between versions; the HTTP endpoint is stable.
+        params: list[tuple[str, str]] = [
+            ("model", self.model),
+            ("language", "ar"),
+            ("smart_format", "true"),
+            ("punctuate", "true"),
+            ("alternatives", "3"),
+        ]
+        # `keywords` is a repeated param.
+        for kw in self._get_keywords():
+            params.append(("keywords", kw))
+
+        # Best-effort content-type sniff from filename.
+        content_type = "audio/m4a"
+        if filename:
+            lower = filename.lower()
+            if lower.endswith(".wav"):
+                content_type = "audio/wav"
+            elif lower.endswith(".mp3"):
+                content_type = "audio/mpeg"
+            elif lower.endswith(".ogg") or lower.endswith(".opus"):
+                content_type = "audio/ogg"
+
+        headers = {
+            "Authorization": f"Token {settings.deepgram_api_key}",
+            "Content-Type": content_type,
         }
 
-        payload = {"buffer": audio_bytes}
-        response = client.listen.rest.v("1").transcribe_file(payload, options)
+        with httpx.Client(timeout=60.0) as http:
+            resp = http.post(
+                self._ENDPOINT, params=params, content=audio_bytes, headers=headers
+            )
+        if resp.status_code != 200:
+            raise RuntimeError(f"Deepgram HTTP {resp.status_code}: {resp.text[:300]}")
 
-        # Walk results.channels[0].alternatives → list of {transcript, confidence, ...}
+        body = resp.json()
         try:
-            channels = response.results.channels
-            alts = channels[0].alternatives if channels else []
-        except (AttributeError, IndexError):
+            alts = body["results"]["channels"][0]["alternatives"]
+        except (KeyError, IndexError):
             return []
 
         candidates: list[str] = []
         for alt in alts:
-            text = (getattr(alt, "transcript", "") or "").strip()
+            text = (alt.get("transcript") or "").strip()
             if not text:
                 continue
-            confidence = float(getattr(alt, "confidence", 1.0) or 0.0)
+            confidence = float(alt.get("confidence", 1.0) or 0.0)
             if confidence < 0.3:
                 continue
             text = _collapse_repetition(text)

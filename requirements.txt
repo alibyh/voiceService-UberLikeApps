@@ -10,6 +10,5 @@ faiss-cpu>=1.7.4
 numpy>=1.24
 anthropic>=0.40
 openai>=1.30
-deepgram-sdk>=3.7
 pytest>=8.0
 httpx>=0.27
