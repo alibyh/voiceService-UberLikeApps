@@ -225,7 +225,8 @@ class DeepgramBackend:
                 raise RuntimeError(
                     "DEEPGRAM_API_KEY is not set. Add it to your env to use the Deepgram backend."
                 )
-            self._client = DeepgramClient(settings.deepgram_api_key)
+            # Newer deepgram-sdk versions require api_key as a keyword arg.
+            self._client = DeepgramClient(api_key=settings.deepgram_api_key)
         return self._client
 
     def _get_keywords(self) -> list[str]:
